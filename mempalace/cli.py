@@ -29,9 +29,57 @@ Examples:
 import os
 import sys
 import argparse
+import json
 from pathlib import Path
 
 from .config import MempalaceConfig
+
+
+def cmd_mcp_serve(args):
+    """Start the MCP server (JSON-RPC over stdin/stdout)."""
+    if args.palace:
+        os.environ["MEMPALACE_PALACE_PATH"] = os.path.abspath(os.path.expanduser(args.palace))
+    from .mcp_server import main as mcp_main
+
+    mcp_main()
+
+
+def cmd_hooks(args):
+    """Print paths or install snippets for bundled hook scripts."""
+    from .hooks import hook_path, hooks_dir
+
+    if args.hooks_command == "path":
+        print(hook_path(args.name) if args.name else hooks_dir())
+        return
+
+    save_hook = str(hook_path("save"))
+    precompact_hook = str(hook_path("precompact"))
+    if args.format == "codex":
+        config = {
+            "Stop": [{"type": "command", "command": save_hook, "timeout": 30}],
+            "PreCompact": [{"type": "command", "command": precompact_hook, "timeout": 30}],
+        }
+        print("Add to .codex/hooks.json:", file=sys.stderr)
+    else:
+        config = {
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": "*",
+                        "hooks": [{"type": "command", "command": save_hook, "timeout": 30}],
+                    }
+                ],
+                "PreCompact": [
+                    {
+                        "hooks": [
+                            {"type": "command", "command": precompact_hook, "timeout": 30}
+                        ]
+                    }
+                ],
+            }
+        }
+        print("Add to .claude/settings.local.json:", file=sys.stderr)
+    print(json.dumps(config, indent=2))
 
 
 def cmd_init(args):
@@ -457,6 +505,18 @@ def main():
         help="Rebuild palace vector index from stored data (fixes segfaults after corruption)",
     )
 
+    # mcp-serve
+    p_mcp_serve = sub.add_parser("mcp-serve", help="Start the MCP server (JSON-RPC over stdin/stdout)")
+    p_mcp_serve.add_argument("--palace", default=argparse.SUPPRESS, help="Where the palace lives")
+
+    # hooks
+    p_hooks = sub.add_parser("hooks", help="Locate and configure bundled hook scripts")
+    hooks_sub = p_hooks.add_subparsers(dest="hooks_command", required=True)
+    p_hooks_path = hooks_sub.add_parser("path", help="Print the installed hooks directory or hook path")
+    p_hooks_path.add_argument("name", nargs="?", choices=["save", "precompact"], help="Hook name")
+    p_hooks_install = hooks_sub.add_parser("install", help="Print hook configuration JSON")
+    p_hooks_install.add_argument("--format", choices=["claude", "codex"], default="claude")
+
     # status
     sub.add_parser("status", help="Show what's been filed")
 
@@ -474,6 +534,8 @@ def main():
         "compress": cmd_compress,
         "wake-up": cmd_wakeup,
         "repair": cmd_repair,
+        "mcp-serve": cmd_mcp_serve,
+        "hooks": cmd_hooks,
         "status": cmd_status,
     }
     dispatch[args.command](args)
